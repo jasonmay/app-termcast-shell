@@ -163,7 +163,7 @@ sub run {
                 }
                 redo;
             }
-            print {$self->term->OUT} CLEAR();
+            $self->output(CLEAR);
             ReadMode 0;
         },
     );
