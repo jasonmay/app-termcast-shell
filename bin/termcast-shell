@@ -1,0 +1,8 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use App::Termcast::Shell;
+
+my $shell = App::Termcast::Shell->new_with_options(@ARGV);
+
+$shell->run;
