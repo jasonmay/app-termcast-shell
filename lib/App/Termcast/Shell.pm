@@ -58,42 +58,48 @@ sub say {
     $self->output("$message\n");
 }
 
+sub _retrieve_sessions {
+    my $self = shift;
+
+    my $socket = IO::Socket::UNIX->new(
+        Peer => Cwd::abs_path($self->socket),
+    ) or die $!;
+    $socket->syswrite(JSON::encode_json({request => 'sessions'}));
+
+    my $json = JSON->new;
+    my ($buf, $data);
+    {
+        $socket->sysread($buf, 4096) until $buf;
+        ($data) = $json->incr_parse($buf);
+        redo until $data;
+    }
+    $socket->close;
+
+    return $data->{response} eq 'sessions' ?  $data->{sessions} : [];
+}
+
 sub run {
     my $self = shift;
 
     my %dispatch = (
         list => sub {
             my @args = @_;
-            my $json = JSON->new;
-            my $socket = IO::Socket::UNIX->new(
-                Peer => Cwd::abs_path($self->socket),
-            );
 
-            $socket->syswrite(JSON::encode_json({request => 'sessions'}));
 
-            my ($data, $buf);
-            {
-                $socket->sysread($buf, 4096) until $buf;
-                ($data) = $json->incr_parse($buf);
-                redo until $data;
-            }
             my $output = '';
-            if ($data->{response} eq 'sessions') {
-                my @sessions = @{ $data->{sessions} };
-                for my $session (@sessions) {
-                    my $ago = ago(time() - $session->{last_active});
-                    $output .= sprintf(
-                        "[%s] %s (%sx%s) - active %s\n",
-                        $session->{session_id},
-                        $session->{user},
-                        @{ $session->{geometry} },
-                        $ago,
-                    );
-                }
+            my $sessions = $self->_retrieve_sessions();
+            for my $session (@$sessions) {
+                my $ago = ago(time() - $session->{last_active});
+                $output .= sprintf(
+                    "[%s] %s (%sx%s) - active %s\n",
+                    $session->{session_id},
+                    $session->{user},
+                    @{ $session->{geometry} },
+                    $ago,
+                );
             }
             $output ||= 'Nobody is currently streaming.';
             $self->say($output);
-            $socket->close;
         },
     );
 
