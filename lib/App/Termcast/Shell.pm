@@ -1,12 +1,14 @@
 package App::Termcast::Shell;
 use Moose;
 use Term::ReadLine;
+use Term::ReadKey;
 
 use JSON;
 use Cwd;
 
 use IO::Socket::UNIX;
 use Time::Duration;
+use List::MoreUtils 'any';
 
 with 'MooseX::Getopt';
 
@@ -47,6 +49,8 @@ has term => (
     default => sub { Term::ReadLine->new('Termcast Shell') },
 );
 
+use constant CLEAR => "\e[2J\e[H";
+
 sub output {
     my $self = shift;
     $self->output_sub->(@_);
@@ -78,6 +82,27 @@ sub _retrieve_sessions {
     return $data->{response} eq 'sessions' ?  $data->{sessions} : [];
 }
 
+sub _format_session_list {
+    my $self = shift;
+    my ($sessions, @ids) = @_;
+
+    my $output = '';
+    for my $session (@$sessions) {
+        if (@ids > 0) {
+            next if any { lc($_) eq lc($session->{session_id}) } @ids;
+        }
+        my $ago = ago(time() - $session->{last_active});
+        $output .= sprintf(
+            "[%s] %s (%sx%s) - active %s\n",
+            $session->{session_id},
+            $session->{user},
+            @{ $session->{geometry} },
+            $ago,
+        );
+    }
+    return $output;
+}
+
 sub run {
     my $self = shift;
 
@@ -85,35 +110,77 @@ sub run {
         list => sub {
             my @args = @_;
 
-
-            my $output = '';
             my $sessions = $self->_retrieve_sessions();
-            for my $session (@$sessions) {
-                my $ago = ago(time() - $session->{last_active});
-                $output .= sprintf(
-                    "[%s] %s (%sx%s) - active %s\n",
-                    $session->{session_id},
-                    $session->{user},
-                    @{ $session->{geometry} },
-                    $ago,
-                );
-            }
+            my $output = $self->_format_session_list($sessions);
             $output ||= 'Nobody is currently streaming.';
             $self->say($output);
+        },
+        view => sub {
+            my $id = shift;
+            my $sessions = $self->_retrieve_sessions();
+            my %session_lookup = ();
+            for my $session (@$sessions) {
+                if ($session->{session_id} =~ /$id/i) {
+                    $session_lookup{$session->{session_id}} = $session;
+                }
+            }
+            if (!scalar keys %session_lookup) {
+                $self->say("Did not find a match. Use 'list' to see the available streams.");
+                return;
+            }
+            if (scalar(keys %session_lookup) > 1) {
+                my $output = "Ambiguous lookup:\n";
+                $output .= $self->_format_session_list(
+                    $sessions, keys(%session_lookup),
+                );
+                $self->say();
+                return;
+            }
+
+            my ($session) = values %session_lookup;
+            my $socket = IO::Socket::UNIX->new(
+                Peer => $session->{socket},
+            );
+
+            $self->output(CLEAR);
+            ReadMode 4;
+
+            my $rin = my $win = my $ein = '';
+            my ($rout, $wout, $eout);
+            vec($rin, fileno($_), 1) = 1 for \*STDIN, $socket;
+            {
+                select($rout = $rin, $wout = $win, $eout = $ein, undef);
+                if (vec($rout, fileno($socket), 1)) {
+                    sysread($socket, my $buf, 4096);
+                    $self->output($buf);
+                }
+                elsif (vec($rout, fileno(\*STDIN), 1)) {
+                    sysread(STDIN, my $buf, 1);
+                    last if $buf eq 'q';
+                }
+                else {
+                    last;
+                }
+                redo;
+            }
+            print {$self->term->OUT} CLEAR();
+            ReadMode 0;
         },
     );
 
     $self->prompt_sub->();
-    while (my $output = $self->term->readline('termcast> ')){
+    while (defined(my $output = $self->term->readline('termcast> '))) {
         chomp $output;
-        my @words = split ' ', $output;
-        my $command = shift @words;
+        if ($output) {
+            my @words = split ' ', $output;
+            my $command = shift @words;
 
-        my $sub = $dispatch{$command} || sub {
-            $self->say("Unknown command.");
-        };
+            my $sub = $dispatch{$command} || sub {
+                $self->say("Unknown command.");
+            };
 
-        $sub->(@words);
+            $sub->(@words);
+        }
 
         $self->prompt_sub->();
     }
