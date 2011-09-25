@@ -19,7 +19,7 @@ has output_sub => (
         my $self = shift;
         return sub {
             my $msg = shift;
-            print {$self->term->OUT} $msg;
+            syswrite \*{$self->term->OUT}, $msg;
         };
     },
 );
