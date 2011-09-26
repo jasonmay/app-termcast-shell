@@ -1,4 +1,6 @@
 package App::Termcast::Shell;
+# ABSTRACT: view termcast sessions from a shell
+
 use Moose;
 use Term::ReadLine;
 use Term::ReadKey;

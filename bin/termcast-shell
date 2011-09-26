@@ -1,6 +1,10 @@
 #!/usr/bin/env perl
+# PODNAME: termcast-shell
+# ABSTRACT: view termcast sessions from a shell
+
 use strict;
 use warnings;
+
 use App::Termcast::Shell;
 
 my $shell = App::Termcast::Shell->new_with_options(@ARGV);
