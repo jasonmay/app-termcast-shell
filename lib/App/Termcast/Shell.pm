@@ -147,13 +147,22 @@ sub run {
             $self->output(CLEAR);
             ReadMode 4;
 
-            my $rin = my $win = my $ein = '';
-            my ($rout, $wout, $eout);
-            vec($rin, fileno($_), 1) = 1 for \*STDIN, $socket;
+            my $error = '';
+            my $rin = my $ein = my $rout = my $eout = '';
             {
-                select($rout = $rin, $wout = $win, $eout = $ein, undef);
-                if (vec($rout, fileno($socket), 1)) {
-                    sysread($socket, my $buf, 4096);
+                vec($rin, fileno($_), 1) = 1 for \*STDIN, $socket;
+                my $select = select($rout = $rin, undef, $eout = $ein, undef);
+                if ($select == -1) {
+                    redo if $!{EAGAIN} or $!{EINTR};
+                }
+
+                if (vec($eout, fileno($socket), 1)) {
+                    $error = 'An error with the socket occurred.';
+                    last;
+                }
+                elsif (vec($rout, fileno($socket), 1)) {
+                    my $read = sysread($socket, my $buf, 4096);
+                    last if not defined $read or $read == 0;
                     $self->output($buf);
                 }
                 elsif (vec($rout, fileno(\*STDIN), 1)) {
@@ -165,7 +174,7 @@ sub run {
                 }
                 redo;
             }
-            $self->output(CLEAR);
+            $self->output($error ? CLEAR . "$error\n" : CLEAR);
             ReadMode 0;
         },
     );
